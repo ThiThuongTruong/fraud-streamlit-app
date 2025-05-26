@@ -12,32 +12,25 @@ with open("scaler.pkl", "rb") as f:
 # Load processed data
 df = pd.read_csv("data_processed.csv")
 
-# Title
 st.title("🔍 Provider-Level Fraud Detection")
 
-# Select Provider
 provider_ids = df["Provider"].unique()
 selected_provider = st.selectbox("Select a Provider:", provider_ids)
 
-# Get provider data
 row = df[df["Provider"] == selected_provider]
 true_label = row["PotentialFraud"].values[0]
 
-# Extract features
 X = row.select_dtypes(include=[np.number]).drop(
     columns=["Label", "ReconstructionError", "PredictedLabel"], errors="ignore"
 )
 
-# Scale and predict
 X_scaled = scaler.transform(X)
 X_pred = autoencoder.predict(X_scaled)
 mse = np.mean(np.power(X_scaled - X_pred, 2), axis=1)
 
-# Set threshold (should match what you used in training)
 threshold = 0.05
 prediction = "⚠️ Fraud" if mse[0] > threshold else "✅ Not Fraud"
 
-# Show results
 st.subheader("Result:")
 st.write(f"**Prediction**: {prediction}")
 st.write(f"**Reconstruction Error**: {mse[0]:.6f}")
