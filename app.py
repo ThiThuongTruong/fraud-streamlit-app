@@ -1,37 +1,59 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import joblib
 from tensorflow.keras.models import load_model
-import pickle
 
-# Load model and scaler
-autoencoder = load_model("autoencoder_model.h5")
-with open("scaler.pkl", "rb") as f:
-    scaler = pickle.load(f)
+# Load model và scaler đã huấn luyện
+model = load_model("autoencoder_model.h5")
+scaler = joblib.load("scaler_autoencoder.pkl")
 
-# Load processed data
-df = pd.read_csv("data_processed.csv")
+st.title("🔍 Provider Fraud Detection App")
+st.markdown("Upload a new dataset to detect potential fraudulent providers.")
 
-st.title("🔍 Provider-Level Fraud Detection")
+uploaded_file = st.file_uploader("📤 Upload CSV file", type=["csv"])
 
-provider_ids = df["Provider"].unique()
-selected_provider = st.selectbox("Select a Provider:", provider_ids)
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    st.success("✅ File uploaded successfully!")
 
-row = df[df["Provider"] == selected_provider]
-true_label = row["PotentialFraud"].values[0]
+    # Dự phòng giữ ID
+    if 'ProviderID' in df.columns:
+        id_col = df['ProviderID']
+    else:
+        id_col = df.index
 
-X = row.select_dtypes(include=[np.number]).drop(
-    columns=["Label", "ReconstructionError", "PredictedLabel"], errors="ignore"
-)
+    # Tiền xử lý
+    df_processed = df.select_dtypes(include=[np.number])
+    df_processed.replace([np.inf, -np.inf], np.nan, inplace=True)
+    df_processed.dropna(axis=1, how='all', inplace=True)
+    df_processed = df_processed.loc[:, df_processed.nunique() > 1]
+    df_processed = df_processed.fillna(df_processed.mean())
 
-X_scaled = scaler.transform(X)
-X_pred = autoencoder.predict(X_scaled)
-mse = np.mean(np.power(X_scaled - X_pred, 2), axis=1)
+    # Chuẩn hóa
+    X_scaled = scaler.transform(df_processed)
 
-threshold = 0.05
-prediction = "⚠️ Fraud" if mse[0] > threshold else "✅ Not Fraud"
+    # Dự đoán với autoencoder
+    reconstructions = model.predict(X_scaled)
+    mse = np.mean(np.power(X_scaled - reconstructions, 2), axis=1)
 
-st.subheader("Result:")
-st.write(f"**Prediction**: {prediction}")
-st.write(f"**Reconstruction Error**: {mse[0]:.6f}")
-st.write(f"**True Label**: {'Fraud' if true_label == 'Yes' else 'Not Fraud'}")
+    # Threshold
+    threshold = np.percentile(mse, 95)
+    is_fraud = mse > threshold
+
+    # Tạo kết quả
+    result_df = pd.DataFrame({
+        'ProviderID': id_col,
+        'fraud_score': mse,
+        'is_fraud': is_fraud
+    })
+
+    st.markdown("### 📋 Detection Results Preview")
+    st.dataframe(result_df.head(10))
+
+    st.markdown(f"🔴 **Threshold (95th percentile):** {threshold:.6f}")
+    st.metric("⚠️ Fraudulent Providers Detected", is_fraud.sum())
+
+    # Tải file kết quả
+    csv = result_df.to_csv(index=False).encode("utf-8")
+    st.download_button("📥 Download Results", data=csv, file_name="fraud_detection_results.csv", mime="text/csv")
